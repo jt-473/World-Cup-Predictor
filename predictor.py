@@ -1,0 +1,244 @@
+import pathlib
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+
+ROOT = pathlib.Path(__file__).resolve().parent
+MODEL_PATH = ROOT / "models" / "worldcup_predictor.joblib"
+
+FEATURE_COLUMNS = [
+    "home_team_id",
+    "away_team_id",
+    "neutral",
+    "year",
+    "month",
+    "day",
+]
+
+TARGET_LABELS = ["Home Win", "Away Win", "Draw"]
+
+# Only include these teams in training and the app
+ALLOWED_TEAMS = {
+    "Canada",
+    "Mexico",
+    "United States",
+    "Australia",
+    "Iran",
+    "Iraq",
+    "Japan",
+    "Jordan",
+    "South Korea",
+    "Qatar",
+    "Saudi Arabia",
+    "Uzbekistan",
+    "Algeria",
+    "Cape Verde",
+    "Congo DR",
+    "Côte d’Ivoire",
+    "Egypt",
+    "Ghana",
+    "Morocco",
+    "Senegal",
+    "South Africa",
+    "Tunisia",
+    "Curaçao",
+    "Haiti",
+    "Panama",
+    "Argentina",
+    "Brazil",
+    "Colombia",
+    "Ecuador",
+    "Paraguay",
+    "Uruguay",
+    "New Zealand",
+    "Austria",
+    "Belgium",
+    "Bosnia and Herzegovina",
+    "Croatia",
+    "Czechia",
+    "England",
+    "France",
+    "Germany",
+    "Netherlands",
+    "Norway",
+    "Portugal",
+    "Scotland",
+    "Spain",
+    "Sweden",
+    "Switzerland",
+    "Türkiye",
+}
+
+
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize common column name variants from different CSV sources.
+
+    Ensures the dataframe contains `home_team_goal`, `away_team_goal`,
+    `date`, and `neutral` columns used throughout the code.
+    """
+    df = df.copy()
+
+    # Home goal candidates
+    home_candidates = [
+        "home_team_goal",
+        "home_team_goals",
+        "home_score",
+        "home_goals",
+        "home_team_score",
+    ]
+    for c in home_candidates:
+        if c in df.columns:
+            df = df.rename(columns={c: "home_team_goal"})
+            break
+
+    # Away goal candidates
+    away_candidates = [
+        "away_team_goal",
+        "away_team_goals",
+        "away_score",
+        "away_goals",
+        "away_team_score",
+    ]
+    for c in away_candidates:
+        if c in df.columns:
+            df = df.rename(columns={c: "away_team_goal"})
+            break
+
+    # Normalize `date` column case-insensitively if needed
+    if "date" not in df.columns:
+        for c in df.columns:
+            if c.lower() == "date":
+                df = df.rename(columns={c: "date"})
+                break
+
+    # Ensure `neutral` exists
+    if "neutral" not in df.columns:
+        df["neutral"] = False
+
+    return df
+
+
+def load_data(csv_path: pathlib.Path) -> pd.DataFrame:
+    df = pd.read_csv(csv_path, parse_dates=["date"])
+    df = _normalize_columns(df)
+    return df
+
+
+def filter_world_cup(df: pd.DataFrame) -> pd.DataFrame:
+    world_cup = df[df["tournament"].str.contains("World Cup", case=False, na=False)].copy()
+    return world_cup if not world_cup.empty else df.copy()
+
+
+def add_match_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month
+    df["day"] = df["date"].dt.day
+    df["neutral"] = df["neutral"].astype(int)
+
+    df["target"] = np.where(
+        df["home_team_goal"] > df["away_team_goal"],
+        "Home Win",
+        np.where(
+            df["home_team_goal"] < df["away_team_goal"],
+            "Away Win",
+            "Draw",
+        ),
+    )
+    return df
+
+
+def encode_teams(df: pd.DataFrame):
+    # Fit a single encoder over all teams to ensure consistent ids
+    teams = pd.Index(df["home_team"]).append(pd.Index(df["away_team"]))
+    teams = teams.unique()
+    le = LabelEncoder().fit(teams)
+    df["home_team_id"] = le.transform(df["home_team"])
+    df["away_team_id"] = le.transform(df["away_team"])
+    return df, le, le
+
+
+def build_training_data(df: pd.DataFrame):
+    df = filter_world_cup(df)
+    df = add_match_features(df)
+    # Keep only matches where both teams are in the allowed set
+    if "home_team" in df.columns and "away_team" in df.columns:
+        df = df[df["home_team"].isin(ALLOWED_TEAMS) & df["away_team"].isin(ALLOWED_TEAMS)].copy()
+
+    if df.empty:
+        raise ValueError(
+            "No matches found for the configured ALLOWED_TEAMS.\n"
+            "Make sure team names in the dataset exactly match the allowed team names."
+        )
+
+    df, le_home, le_away = encode_teams(df)
+    X = df[FEATURE_COLUMNS]
+    y = df["target"]
+    return X, y, le_home, le_away
+
+
+def train_and_save_model(csv_path: pathlib.Path, model_path: pathlib.Path = MODEL_PATH):
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    df = load_data(csv_path)
+    X, y, le_home, le_away = build_training_data(df)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, stratify=y, random_state=42
+    )
+
+    model = RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)
+    model.fit(X_train, y_train)
+
+    y_pred = model.predict(X_test)
+    print("\nModel classification report:")
+    print(classification_report(y_test, y_pred, digits=3))
+
+    joblib.dump(
+        {
+            "model": model,
+            "le_home": le_home,
+            "le_away": le_away,
+            "feature_columns": FEATURE_COLUMNS,
+        },
+        model_path,
+    )
+    print(f"Saved model to: {model_path}")
+    return model_path
+
+
+def load_saved_model(model_path: pathlib.Path = MODEL_PATH):
+    return joblib.load(model_path)
+
+
+def make_prediction(model_data, home_team: str, away_team: str, neutral: bool, match_date: pd.Timestamp):
+    le_home = model_data["le_home"]
+    le_away = model_data["le_away"]
+    model = model_data["model"]
+
+    if home_team not in le_home.classes_:
+        raise ValueError(f"Home team not found in trained data: {home_team}")
+    if away_team not in le_away.classes_:
+        raise ValueError(f"Away team not found in trained data: {away_team}")
+
+    row = pd.DataFrame(
+        [
+            {
+                "home_team_id": int(le_home.transform([home_team])[0]),
+                "away_team_id": int(le_away.transform([away_team])[0]),
+                "neutral": int(neutral),
+                "year": int(match_date.year),
+                "month": int(match_date.month),
+                "day": int(match_date.day),
+            }
+        ]
+    )
+
+    prediction = model.predict(row)[0]
+    probabilities = model.predict_proba(row)[0]
+    proba_map = dict(zip(model.classes_, probabilities))
+    return prediction, proba_map
