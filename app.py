@@ -8,6 +8,37 @@ ROOT = pathlib.Path(__file__).resolve().parent
 MODEL_PATH = ROOT / "models" / "worldcup_predictor.joblib"
 
 
+def _score_from_prediction(pred: str, probs: dict) -> str:
+    """Choose a simple scoreline heuristic based on predicted class and its probability.
+
+    This is a lightweight heuristic (no expected-goals model): stronger probabilities
+    get larger margins.
+    """
+    p = float(probs.get(pred, 0))
+    if pred == "Draw":
+        if p > 0.75:
+            return "1-1"
+        if p > 0.5:
+            return "0-0"
+        return "1-1"
+    if pred == "Home Win":
+        if p > 0.75:
+            return "3-0"
+        if p > 0.55:
+            return "2-0"
+        if p > 0.45:
+            return "2-1"
+        return "1-0"
+    # Away Win
+    if p > 0.75:
+        return "0-3"
+    if p > 0.55:
+        return "0-2"
+    if p > 0.45:
+        return "1-2"
+    return "0-1"
+
+
 def main() -> None:
     st.set_page_config(page_title="World Cup Outcome Predictor", layout="centered")
     st.title("World Cup Match Outcome Predictor")
@@ -109,8 +140,10 @@ def main() -> None:
                         pred = "Draw"
                         probs = {"Draw": 1.0}
 
+                    # display predicted score alongside the outcome and probabilities
+                    score = _score_from_prediction(pred, probs)
                     probs_text = ", ".join(f"{k}: {v*100 if isinstance(v, float) else v}" for k, v in probs.items())
-                    st.write(f"{home} vs {away} — {pred} — {probs_text}")
+                    st.write(f"{home} {score} {away} — {pred} — {probs_text}")
 
                     if pred == "Home Win":
                         table[home]["W"] += 1
