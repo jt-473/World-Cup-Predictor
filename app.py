@@ -93,7 +93,6 @@ def main() -> None:
                 return synonyms.get(team, team)
 
             from itertools import combinations
-            import pandas as pd
 
             for group_name, teams in raw_groups.items():
                 norm = [normalize(t) for t in teams]
