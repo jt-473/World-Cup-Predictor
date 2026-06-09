@@ -57,6 +57,83 @@ def main() -> None:
 
         st.caption("The model is trained on historic FIFA World Cup results from the Kaggle dataset.")
 
+    # Group predictions section
+    with st.expander("Generate group-stage forecasts"):
+        st.write("Click the button to generate fixture predictions and final group tables using the trained model.")
+        if st.button("Generate group forecasts"):
+            model_data = load_saved_model(MODEL_PATH)
+            # default groups (use dataset labels mapping)
+            raw_groups = {
+                "Group A": ["Mexico", "South Africa", "Korea Republic", "Czechia"],
+                "Group B": ["Canada", "Bosnia & Herzegovina", "Qatar", "Switzerland"],
+                "Group C": ["Brazil", "Morocco", "Haiti", "Scotland"],
+                "Group D": ["USA", "Paraguay", "Australia", "Türkiye"],
+                "Group E": ["Germany", "Curaçao", "Côte d’Ivoire", "Ecuador"],
+                "Group F": ["Netherlands", "Japan", "Sweden", "Tunisia"],
+                "Group G": ["Belgium", "Egypt", "IR Iran", "New Zealand"],
+                "Group H": ["Spain", "Cabo Verde", "Saudi Arabia", "Uruguay"],
+                "Group I": ["France", "Senegal", "Iraq", "Norway"],
+                "Group J": ["Argentina", "Algeria", "Austria", "Jordan"],
+                "Group K": ["Portugal", "Congo DR", "Uzbekistan", "Colombia"],
+                "Group L": ["England", "Croatia", "Ghana", "Panama"],
+            }
+            synonyms = {
+                "Korea Republic": "South Korea",
+                "USA": "United States",
+                "Türkiye": "Turkey",
+                "Côte d’Ivoire": "Ivory Coast",
+                "Cabo Verde": "Cape Verde",
+                "IR Iran": "Iran",
+                "Czechia": "Czech Republic",
+                "Bosnia & Herzegovina": "Bosnia and Herzegovina",
+                "Congo DR": "DR Congo",
+            }
+
+            def normalize(team):
+                return synonyms.get(team, team)
+
+            from itertools import combinations
+            import pandas as pd
+
+            for group_name, teams in raw_groups.items():
+                norm = [normalize(t) for t in teams]
+                st.subheader(group_name)
+                # build fixtures
+                fixtures = list(combinations(norm, 2))
+                # table accumulator
+                table = {t: {"P": 0, "W": 0, "D": 0, "L": 0, "Pts": 0} for t in norm}
+                for home, away in fixtures:
+                    try:
+                        pred, probs = make_prediction(model_data, home, away, neutral=True, match_date=pd.Timestamp.today())
+                    except Exception as e:
+                        st.error(f"Prediction error for {home} vs {away}: {e}")
+                        pred = "Draw"
+                        probs = {"Draw": 1.0}
+
+                    probs_text = ", ".join(f"{k}: {v*100 if isinstance(v, float) else v}" for k, v in probs.items())
+                    st.write(f"{home} vs {away} — {pred} — {probs_text}")
+
+                    if pred == "Home Win":
+                        table[home]["W"] += 1
+                        table[away]["L"] += 1
+                        table[home]["Pts"] += 3
+                    elif pred == "Away Win":
+                        table[away]["W"] += 1
+                        table[home]["L"] += 1
+                        table[away]["Pts"] += 3
+                    else:
+                        table[home]["D"] += 1
+                        table[away]["D"] += 1
+                        table[home]["Pts"] += 1
+                        table[away]["Pts"] += 1
+                    table[home]["P"] += 1
+                    table[away]["P"] += 1
+
+                # show final table
+                df_table = pd.DataFrame.from_dict(table, orient="index")
+                df_table = df_table.sort_values(["Pts", "W", "D"], ascending=[False, False, False])
+                st.table(df_table)
+
 
 if __name__ == "__main__":
     main()
