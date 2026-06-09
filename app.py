@@ -140,19 +140,12 @@ def main() -> None:
                         pred = "Draw"
                         probs = {"Draw": 1.0}
 
-                    # display predicted score alongside the outcome and probabilities
+                    # display only the predicted score in a World-Cup-style row
                     score = _score_from_prediction(pred, probs)
-                    # Order probabilities using model class order when available
-                    try:
-                        ordered_labels = list(model_data["model"].classes_)
-                    except Exception:
-                        ordered_labels = list(probs.keys())
-
-                    probs_text = ", ".join(
-                        f"{label}: {float(probs.get(label,0))*100:.1f}"
-                        for label in ordered_labels
-                    )
-                    st.write(f"{home} {score} {away} — {pred} — {probs_text}")
+                    left, mid, right = st.columns([3, 1, 3])
+                    left.markdown(f"**{home}**")
+                    mid.markdown(f"### {score}")
+                    right.markdown(f"**{away}**")
 
                     if pred == "Home Win":
                         table[home]["W"] += 1
