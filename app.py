@@ -142,7 +142,16 @@ def main() -> None:
 
                     # display predicted score alongside the outcome and probabilities
                     score = _score_from_prediction(pred, probs)
-                    probs_text = ", ".join(f"{k}: {v*100 if isinstance(v, float) else v}" for k, v in probs.items())
+                    # Order probabilities using model class order when available
+                    try:
+                        ordered_labels = list(model_data["model"].classes_)
+                    except Exception:
+                        ordered_labels = list(probs.keys())
+
+                    probs_text = ", ".join(
+                        f"{label}: {float(probs.get(label,0))*100:.1f}"
+                        for label in ordered_labels
+                    )
                     st.write(f"{home} {score} {away} — {pred} — {probs_text}")
 
                     if pred == "Home Win":
